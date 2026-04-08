@@ -1,0 +1,183 @@
+<Window x:Class="Clicky.App.Views.CompanionPanelWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Clicky"
+        Width="430"
+        Height="640"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStyle="None">
+  <Border Padding="22"
+          Background="{StaticResource PanelBackgroundBrush}"
+          BorderBrush="{StaticResource PanelBorderBrush}"
+          BorderThickness="1"
+          CornerRadius="30">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <StackPanel>
+        <TextBlock FontSize="28"
+                   FontWeight="SemiBold"
+                   Foreground="{StaticResource PrimaryTextBrush}"
+                   Text="Clicky" />
+        <TextBlock Margin="0,8,0,0"
+                   Foreground="{StaticResource SecondaryTextBrush}"
+                   Text="Windows tray companion with live voice, screenshots, Claude streaming, and ElevenLabs playback." />
+      </StackPanel>
+
+      <Border Grid.Row="1"
+              Margin="0,18,0,0"
+              Padding="16"
+              Background="{StaticResource PanelSectionBrush}"
+              CornerRadius="22">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+
+          <StackPanel>
+            <TextBlock Foreground="{StaticResource SecondaryTextBrush}" Text="State" />
+            <TextBlock Margin="0,4,0,0"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource PrimaryTextBrush}"
+                       Text="{Binding CurrentStateLabel}" />
+            <TextBlock Margin="0,8,0,0"
+                       Foreground="{StaticResource MutedTextBrush}"
+                       Text="{Binding StatusText}" />
+          </StackPanel>
+
+          <Border Grid.Column="1"
+                  Padding="12,8"
+                  VerticalAlignment="Top"
+                  Background="#3316B8FF"
+                  CornerRadius="16">
+            <TextBlock Foreground="{StaticResource Blue200Brush}"
+                       Text="Ctrl + Alt" />
+          </Border>
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="2"
+              Margin="0,18,0,0"
+              Padding="16"
+              Background="{StaticResource PanelSectionBrush}"
+              CornerRadius="22">
+        <StackPanel>
+          <TextBlock Foreground="{StaticResource SecondaryTextBrush}" Text="Manual prompt" />
+          <TextBox x:Name="ManualPromptTextBox"
+                   Margin="0,10,0,0"
+                   MinHeight="120"
+                   AcceptsReturn="True"
+                   TextWrapping="Wrap"
+                   VerticalScrollBarVisibility="Auto"
+                   Text="{Binding ManualPromptText, UpdateSourceTrigger=PropertyChanged}" />
+          <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <ComboBox Width="170"
+                      ItemsSource="{Binding AvailableModels}"
+                      SelectedItem="{Binding SelectedModel}" />
+
+            <Button Grid.Column="1"
+                    Tag="primary"
+                    Click="HandleSendPromptButtonClick"
+                    IsEnabled="{Binding CanSendManualPrompt}"
+                    Content="Capture + Ask" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Row="3"
+              Margin="0,18,0,0"
+              Padding="16"
+              Background="{StaticResource PanelSectionBrush}"
+              CornerRadius="22">
+        <StackPanel>
+          <TextBlock Foreground="{StaticResource SecondaryTextBrush}" Text="Worker" />
+          <TextBlock Margin="0,8,0,0"
+                     Foreground="{StaticResource PrimaryTextBrush}"
+                     Text="{Binding WorkerBaseUrl}"
+                     TextWrapping="Wrap" />
+          <TextBlock Margin="0,10,0,0"
+                     Foreground="{StaticResource MutedTextBrush}"
+                     Text="{Binding AttachedDisplaySummary}" />
+        </StackPanel>
+      </Border>
+
+      <Grid Grid.Row="4" Margin="0,18,0,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Button Margin="0,0,8,0"
+                Click="HandleOverlayToggleButtonClick"
+                Content="{Binding OverlayToggleButtonLabel}" />
+
+        <Button Grid.Column="1"
+                Margin="8,0,0,0"
+                Click="HandleQuitButtonClick"
+                Content="Quit" />
+      </Grid>
+
+      <Grid Grid.Row="5" Margin="0,18,0,0">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Foreground="{StaticResource SecondaryTextBrush}" Text="Latest prompt" />
+        <Border Grid.Row="1"
+                Margin="0,8,0,0"
+                Padding="16"
+                Background="{StaticResource PanelSectionBrush}"
+                CornerRadius="22">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <TextBlock Foreground="{StaticResource PrimaryTextBrush}"
+                       Text="{Binding LatestTranscriptText}"
+                       TextWrapping="Wrap" />
+          </ScrollViewer>
+        </Border>
+
+        <TextBlock Grid.Row="2"
+                   Margin="0,16,0,0"
+                   Foreground="{StaticResource SecondaryTextBrush}"
+                   Text="Latest response" />
+        <Border Grid.Row="3"
+                Margin="0,8,0,0"
+                Padding="16"
+                Background="{StaticResource PanelSectionBrush}"
+                CornerRadius="22">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <TextBlock Foreground="{StaticResource PrimaryTextBrush}"
+                       Text="{Binding LatestResponseText}"
+                       TextWrapping="Wrap" />
+          </ScrollViewer>
+        </Border>
+      </Grid>
+
+      <TextBlock Grid.Row="6"
+                 Margin="0,18,0,0"
+                 Foreground="{StaticResource MutedTextBrush}"
+                 Text="The tray panel and push-to-talk both run through the same screenshot + Claude + ElevenLabs pipeline." />
+    </Grid>
+  </Border>
+</Window>

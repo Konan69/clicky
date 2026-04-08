@@ -1,0 +1,25 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Clicky.App", "src\Clicky.App\Clicky.App.csproj", "{7DDB5582-2B26-4CF7-9D8C-8DDF2269AA41}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7DDB5582-2B26-4CF7-9D8C-8DDF2269AA41}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7DDB5582-2B26-4CF7-9D8C-8DDF2269AA41}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7DDB5582-2B26-4CF7-9D8C-8DDF2269AA41}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7DDB5582-2B26-4CF7-9D8C-8DDF2269AA41}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F1A6B5D4-EBFA-426A-934F-D14A15F3D8AB}
+	EndGlobalSection
+EndGlobal
+

@@ -1,62 +1,45 @@
-# Hi, this is Clicky.
-It's an AI teacher that lives as a buddy next to your cursor. It can see your screen, talk to you, and even point at stuff. Kinda like having a real teacher next to you.
+# Clicky for Windows
 
-Download it [here](https://www.clicky.so/) for free.
+Clicky is an AI desktop companion that lives in the Windows tray, sees your screens, listens while you hold `Ctrl + Alt`, streams your transcript and screenshots to Claude, speaks back through ElevenLabs, and can point at UI elements with a floating overlay.
 
-Here's the [original tweet](https://x.com/FarzaTV/status/2041314633978659092) that kinda blew up for a demo for more context.
+`main` is now the Windows C# rewrite. The old macOS Swift app is preserved on the `macos-swift-main` branch.
 
-![Clicky — an ai buddy that lives on your mac](clicky-demo.gif)
+![Clicky demo](clicky-demo.gif)
 
-This is the open-source version of Clicky for those that want to hack on it, build their own features, or just see how it works under the hood.
+## What ships on `main`
 
-## Get started with Claude Code
+- Tray-first Windows app built with `C#`, `.NET 8`, and `WPF`
+- Floating companion panel instead of a normal main window
+- Transparent always-on-top overlay for Clicky’s cursor bubble
+- Global push-to-talk with `Ctrl + Alt`
+- Live microphone streaming to AssemblyAI over websocket
+- Multi-monitor screenshot capture before each Claude request
+- Claude SSE streaming through the Cloudflare Worker
+- ElevenLabs playback through the Cloudflare Worker
+- `[POINT:x,y:label:screenN]` parsing so Claude can move the overlay cursor
 
-The fastest way to get this running is with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+## Prereqs
 
-Once you get Claude running, paste this:
+- Windows 10/11
+- .NET 8 SDK
+- Visual Studio 2022 or `dotnet` CLI
+- Node.js 18+ for the Worker
+- Cloudflare account
+- Anthropic, AssemblyAI, and ElevenLabs API keys
 
-```
-Hi Claude.
+WPF is Windows-only. Do not expect this branch to build on macOS or Linux.
 
-Clone https://github.com/farzaa/clicky.git into my current directory.
-
-Then read the CLAUDE.md. I want to get Clicky running locally on my Mac.
-
-Help me set up everything — the Cloudflare Worker with my own API keys, the proxy URLs, and getting it building in Xcode. Walk me through it.
-```
-
-That's it. It'll clone the repo, read the docs, and walk you through the whole setup. Once you're running you can just keep talking to it — build features, fix bugs, whatever. Go crazy.
-
-## Manual setup
-
-If you want to do it yourself, here's the deal.
-
-### Prerequisites
-
-- macOS 14.2+ (for ScreenCaptureKit)
-- Xcode 15+
-- Node.js 18+ (for the Cloudflare Worker)
-- A [Cloudflare](https://cloudflare.com) account (free tier works)
-- API keys for: [Anthropic](https://console.anthropic.com), [AssemblyAI](https://www.assemblyai.com), [ElevenLabs](https://elevenlabs.io)
-
-### 1. Set up the Cloudflare Worker
-
-The Worker is a tiny proxy that holds your API keys. The app talks to the Worker, the Worker talks to the APIs. This way your keys never ship in the app binary.
+## 1. Set up the Worker
 
 ```bash
 cd worker
 npm install
-```
-
-Now add your secrets. Wrangler will prompt you to paste each one:
-
-```bash
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put ASSEMBLYAI_API_KEY
 npx wrangler secret put ELEVENLABS_API_KEY
 ```
 
-For the ElevenLabs voice ID, open `wrangler.toml` and set it there (it's not sensitive):
+Set your ElevenLabs voice id in `worker/wrangler.toml`:
 
 ```toml
 [vars]
@@ -69,84 +52,70 @@ Deploy it:
 npx wrangler deploy
 ```
 
-It'll give you a URL like `https://your-worker-name.your-subdomain.workers.dev`. Copy that.
-
-### 2. Run the Worker locally (for development)
-
-If you want to test changes to the Worker without deploying:
+For local worker dev:
 
 ```bash
 cd worker
 npx wrangler dev
 ```
 
-This starts a local server (usually `http://localhost:8787`) that behaves exactly like the deployed Worker. You'll need to create a `.dev.vars` file in the `worker/` directory with your keys:
+Create `worker/.dev.vars` with:
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
+```bash
+ANTHROPIC_API_KEY=...
 ASSEMBLYAI_API_KEY=...
 ELEVENLABS_API_KEY=...
 ELEVENLABS_VOICE_ID=...
 ```
 
-Then update the proxy URLs in the Swift code to point to `http://localhost:8787` instead of the deployed Worker URL while developing. Grep for `clicky-proxy` to find them all.
+## 2. Point the app at your Worker
 
-### 3. Update the proxy URLs in the app
+Set the Worker URL in either place:
 
-The app has the Worker URL hardcoded in a few places. Search for `your-worker-name.your-subdomain.workers.dev` and replace it with your Worker URL:
+- `src/Clicky.App/appsettings.json`
+- `CLICKY_WORKER_BASE_URL` env var
+
+Example:
+
+```json
+{
+  "workerBaseUrl": "https://your-worker-name.your-subdomain.workers.dev",
+  "defaultClaudeModel": "claude-sonnet-4-6"
+}
+```
+
+## 3. Run the Windows app
+
+From Windows:
 
 ```bash
-grep -r "clicky-proxy" leanring-buddy/
+dotnet restore Clicky.sln
+dotnet run --project src/Clicky.App/Clicky.App.csproj
 ```
 
-You'll find it in:
-- `CompanionManager.swift` — Claude chat + ElevenLabs TTS
-- `AssemblyAIStreamingTranscriptionProvider.swift` — AssemblyAI token endpoint
+Or open `Clicky.sln` in Visual Studio and run `Clicky.App`.
 
-### 4. Open in Xcode and run
+The app lives in the tray. Left-click the tray icon to open the panel. Hold `Ctrl + Alt` to talk.
 
-```bash
-open leanring-buddy.xcodeproj
+## Project layout
+
+```text
+src/Clicky.App/               Windows WPF app
+  Services/CompanionCoordinator.cs
+  Services/Audio/
+  Services/Transcription/
+  Services/Chat/
+  Services/Tts/
+  Views/
+  ViewModels/
+worker/                       Cloudflare proxy
+  src/index.ts
+AGENTS.md                     Architecture + agent notes
 ```
 
-In Xcode:
-1. Select the `leanring-buddy` scheme (yes, the typo is intentional, long story)
-2. Set your signing team under Signing & Capabilities
-3. Hit **Cmd + R** to build and run
+## Notes
 
-The app will appear in your menu bar (not the dock). Click the icon to open the panel, grant the permissions it asks for, and you're good.
-
-### Permissions the app needs
-
-- **Microphone** — for push-to-talk voice capture
-- **Accessibility** — for the global keyboard shortcut (Control + Option)
-- **Screen Recording** — for taking screenshots when you use the hotkey
-- **Screen Content** — for ScreenCaptureKit access
-
-## Architecture
-
-If you want the full technical breakdown, read `CLAUDE.md`. But here's the short version:
-
-**Menu bar app** (no dock icon) with two `NSPanel` windows — one for the control panel dropdown, one for the full-screen transparent cursor overlay. Push-to-talk streams audio over a websocket to AssemblyAI, sends the transcript + screenshot to Claude via streaming SSE, and plays the response through ElevenLabs TTS. Claude can embed `[POINT:x,y:label:screenN]` tags in its responses to make the cursor fly to specific UI elements across multiple monitors. All three APIs are proxied through a Cloudflare Worker.
-
-## Project structure
-
-```
-leanring-buddy/          # Swift source (yes, the typo stays)
-  CompanionManager.swift    # Central state machine
-  CompanionPanelView.swift  # Menu bar panel UI
-  ClaudeAPI.swift           # Claude streaming client
-  ElevenLabsTTSClient.swift # Text-to-speech playback
-  OverlayWindow.swift       # Blue cursor overlay
-  AssemblyAI*.swift         # Real-time transcription
-  BuddyDictation*.swift     # Push-to-talk pipeline
-worker/                  # Cloudflare Worker proxy
-  src/index.ts              # Three routes: /chat, /tts, /transcribe-token
-CLAUDE.md                # Full architecture doc (agents read this)
-```
-
-## Contributing
-
-PRs welcome. If you're using Claude Code, it already knows the codebase — just tell it what you want to build and point it at `CLAUDE.md`.
-
-Got feedback? DM me on X [@farzatv](https://x.com/farzatv).
+- The app never ships raw API keys. Everything goes through the Worker.
+- The overlay is click-through and doesn’t steal input.
+- The current screenshot capture uses Windows GDI capture per display.
+- If you want the original Mac version, switch to `macos-swift-main`.

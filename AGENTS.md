@@ -1,167 +1,146 @@
 # Clicky - Agent Instructions
 
-<!-- This is the single source of truth for all AI coding agents. CLAUDE.md is a symlink to this file. -->
-<!-- AGENTS.md spec: https://github.com/agentsmd/agents.md — supported by Claude Code, Cursor, Copilot, Gemini CLI, and others. -->
+<!-- This is the single source of truth for all AI coding agents. -->
 
 ## Overview
 
-macOS menu bar companion app. Lives entirely in the macOS status bar (no dock icon, no main window). Clicking the menu bar icon opens a custom floating panel with companion voice controls. Uses push-to-talk (ctrl+option) to capture voice input, transcribes it via AssemblyAI streaming, and sends the transcript + a screenshot of the user's screen to Claude. Claude responds with text (streamed via SSE) and voice (ElevenLabs TTS). A blue cursor overlay can fly to and point at UI elements Claude references on any connected monitor.
+Windows tray companion app. Lives in the notification area instead of a normal main window. Clicking the tray icon opens a custom floating panel. Holding `Ctrl + Alt` starts push-to-talk, streams microphone audio to AssemblyAI, captures screenshots from every connected display, sends transcript + screenshots to Claude through the Cloudflare Worker, then plays the response through ElevenLabs. Claude can append `[POINT:x,y:label:screenN]` tags and the transparent overlay moves Clicky’s cursor bubble to that point.
 
-All API keys live on a Cloudflare Worker proxy — nothing sensitive ships in the app.
+`main` is the Windows rewrite. The legacy macOS Swift app was moved to `macos-swift-main`.
 
 ## Architecture
 
-- **App Type**: Menu bar-only (`LSUIElement=true`), no dock icon or main window
-- **Framework**: SwiftUI (macOS native) with AppKit bridging for menu bar panel and cursor overlay
-- **Pattern**: MVVM with `@StateObject` / `@Published` state management
-- **AI Chat**: Claude (Sonnet 4.6 default, Opus 4.6 optional) via Cloudflare Worker proxy with SSE streaming
-- **Speech-to-Text**: AssemblyAI real-time streaming (`u3-rt-pro` model) via websocket, with OpenAI and Apple Speech as fallbacks
-- **Text-to-Speech**: ElevenLabs (`eleven_flash_v2_5` model) via Cloudflare Worker proxy
-- **Screen Capture**: ScreenCaptureKit (macOS 14.2+), multi-monitor support
-- **Voice Input**: Push-to-talk via `AVAudioEngine` + pluggable transcription-provider layer. System-wide keyboard shortcut via listen-only CGEvent tap.
-- **Element Pointing**: Claude embeds `[POINT:x,y:label:screenN]` tags in responses. The overlay parses these, maps coordinates to the correct monitor, and animates the blue cursor along a bezier arc to the target.
-- **Concurrency**: `@MainActor` isolation, async/await throughout
-- **Analytics**: PostHog via `ClickyAnalytics.swift`
+- **App Type**: Tray-only Windows desktop app, no taskbar-first main window flow
+- **Framework**: C# + .NET 8 + WPF, with Win32 and WinForms interop where Windows APIs are the right tool
+- **Pattern**: MVVM with `ObservableObject` view models and a central `CompanionCoordinator`
+- **AI Chat**: Claude via Cloudflare Worker SSE streaming
+- **Speech-to-Text**: AssemblyAI universal streaming websocket with short-lived worker-issued tokens
+- **Text-to-Speech**: ElevenLabs via Cloudflare Worker
+- **Screen Capture**: Per-display Windows desktop capture using GDI (`Graphics.CopyFromScreen`)
+- **Voice Input**: `NAudio` microphone capture at 16kHz PCM16 mono
+- **Push-To-Talk**: Global low-level keyboard hook for `Ctrl + Alt`
+- **Element Pointing**: Claude emits `[POINT:x,y:label:screenN]` tags; the overlay maps screenshot coordinates back onto the virtual desktop
+- **Concurrency**: async/await for all network and streaming work, Dispatcher-bound UI state updates
 
-### API Proxy (Cloudflare Worker)
+### API Proxy
 
-The app never calls external APIs directly. All requests go through a Cloudflare Worker (`worker/src/index.ts`) that holds the real API keys as secrets.
+The desktop app never calls Anthropic, AssemblyAI, or ElevenLabs directly with raw credentials. All secrets stay in the Worker at `worker/src/index.ts`.
 
 | Route | Upstream | Purpose |
 |-------|----------|---------|
-| `POST /chat` | `api.anthropic.com/v1/messages` | Claude vision + streaming chat |
-| `POST /tts` | `api.elevenlabs.io/v1/text-to-speech/{voiceId}` | ElevenLabs TTS audio |
-| `POST /transcribe-token` | `streaming.assemblyai.com/v3/token` | Fetches a short-lived (480s) AssemblyAI websocket token |
+| `POST /chat` | `api.anthropic.com/v1/messages` | Claude screenshot + transcript chat |
+| `POST /tts` | `api.elevenlabs.io/v1/text-to-speech/{voiceId}` | ElevenLabs audio |
+| `POST /transcribe-token` | `streaming.assemblyai.com/v3/token` | Short-lived AssemblyAI websocket token |
 
 Worker secrets: `ANTHROPIC_API_KEY`, `ASSEMBLYAI_API_KEY`, `ELEVENLABS_API_KEY`
+
 Worker vars: `ELEVENLABS_VOICE_ID`
 
-### Key Architecture Decisions
+## Key Architecture Decisions
 
-**Menu Bar Panel Pattern**: The companion panel uses `NSStatusItem` for the menu bar icon and a custom borderless `NSPanel` for the floating control panel. This gives full control over appearance (dark, rounded corners, custom shadow) and avoids the standard macOS menu/popover chrome. The panel is non-activating so it doesn't steal focus. A global event monitor auto-dismisses it on outside clicks.
+**Tray-first shell**: The app uses a `NotifyIcon` host instead of a normal startup window. WPF owns the panel and overlay windows, but the tray icon itself comes from WinForms because it is the simplest reliable Windows tray API.
 
-**Cursor Overlay**: A full-screen transparent `NSPanel` hosts the blue cursor companion. It's non-activating, joins all Spaces, and never steals focus. The cursor position, response text, waveform, and pointing animations all render in this overlay via SwiftUI through `NSHostingView`.
+**Transparent overlay**: The overlay is a borderless WPF window with Win32 extended styles for layered, transparent, click-through behavior. That keeps the bubble visible without blocking desktop input.
 
-**Global Push-To-Talk Shortcut**: Background push-to-talk uses a listen-only `CGEvent` tap instead of an AppKit global monitor so modifier-based shortcuts like `ctrl + option` are detected more reliably while the app is running in the background.
+**Low-level push-to-talk hook**: `RegisterHotKey` is not enough for modifier hold/release behavior. The app uses `WH_KEYBOARD_LL` so `Ctrl + Alt` behaves like real push-to-talk.
 
-**Shared URLSession for AssemblyAI**: A single long-lived `URLSession` is shared across all AssemblyAI streaming sessions (owned by the provider, not the session). Creating and invalidating a URLSession per session corrupts the OS connection pool and causes "Socket is not connected" errors after a few rapid reconnections.
+**AssemblyAI turn finalization**: Releasing push-to-talk sends `ForceEndpoint` and waits briefly for AssemblyAI’s formatted turn. If that explicit final turn does not arrive in time, the app falls back to the best partial transcript it already has.
 
-**Transient Cursor Mode**: When "Show Clicky" is off, pressing the hotkey fades in the cursor overlay for the duration of the interaction (recording → response → TTS → optional pointing), then fades it out automatically after 1 second of inactivity.
+**Screenshot-to-point mapping**: Screenshots are captured per display in original pixel size. That lets the overlay convert Claude’s `[POINT:x,y:label:screenN]` coordinates back into virtual desktop coordinates without guessing.
 
 ## Key Files
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `leanring_buddyApp.swift` | ~89 | Menu bar app entry point. Uses `@NSApplicationDelegateAdaptor` with `CompanionAppDelegate` which creates `MenuBarPanelManager` and starts `CompanionManager`. No main window — the app lives entirely in the status bar. |
-| `CompanionManager.swift` | ~1026 | Central state machine. Owns dictation, shortcut monitoring, screen capture, Claude API, ElevenLabs TTS, and overlay management. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → Claude → TTS → pointing pipeline. |
-| `MenuBarPanelManager.swift` | ~243 | NSStatusItem + custom NSPanel lifecycle. Creates the menu bar icon, manages the floating companion panel (show/hide/position), installs click-outside-to-dismiss monitor. |
-| `CompanionPanelView.swift` | ~761 | SwiftUI panel content for the menu bar dropdown. Shows companion status, push-to-talk instructions, model picker (Sonnet/Opus), permissions UI, DM feedback button, and quit button. Dark aesthetic using `DS` design system. |
-| `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
-| `CompanionResponseOverlay.swift` | ~217 | SwiftUI view for the response text bubble and waveform displayed next to the cursor in the overlay. |
-| `CompanionScreenCaptureUtility.swift` | ~132 | Multi-monitor screenshot capture using ScreenCaptureKit. Returns labeled image data for each connected display. |
-| `BuddyDictationManager.swift` | ~866 | Push-to-talk voice pipeline. Handles microphone capture via `AVAudioEngine`, provider-aware permission checks, keyboard/button dictation sessions, transcript finalization, shortcut parsing, contextual keyterms, and live audio-level reporting for waveform feedback. |
-| `BuddyTranscriptionProvider.swift` | ~100 | Protocol surface and provider factory for voice transcription backends. Resolves provider based on `VoiceTranscriptionProvider` in Info.plist — AssemblyAI, OpenAI, or Apple Speech. |
-| `AssemblyAIStreamingTranscriptionProvider.swift` | ~478 | Streaming transcription provider. Fetches temp tokens from the Cloudflare Worker, opens an AssemblyAI v3 websocket, streams PCM16 audio, tracks turn-based transcripts, and delivers finalized text on key-up. Shares a single URLSession across all sessions. |
-| `OpenAIAudioTranscriptionProvider.swift` | ~317 | Upload-based transcription provider. Buffers push-to-talk audio locally, uploads as WAV on release, returns finalized transcript. |
-| `AppleSpeechTranscriptionProvider.swift` | ~147 | Local fallback transcription provider backed by Apple's Speech framework. |
-| `BuddyAudioConversionSupport.swift` | ~108 | Audio conversion helpers. Converts live mic buffers to PCM16 mono audio and builds WAV payloads for upload-based providers. |
-| `GlobalPushToTalkShortcutMonitor.swift` | ~132 | System-wide push-to-talk monitor. Owns the listen-only `CGEvent` tap and publishes press/release transitions. |
-| `ClaudeAPI.swift` | ~291 | Claude vision API client with streaming (SSE) and non-streaming modes. TLS warmup optimization, image MIME detection, conversation history support. |
-| `OpenAIAPI.swift` | ~142 | OpenAI GPT vision API client. |
-| `ElevenLabsTTSClient.swift` | ~81 | ElevenLabs TTS client. Sends text to the Worker proxy, plays back audio via `AVAudioPlayer`. Exposes `isPlaying` for transient cursor scheduling. |
-| `ElementLocationDetector.swift` | ~335 | Detects UI element locations in screenshots for cursor pointing. |
-| `DesignSystem.swift` | ~880 | Design system tokens — colors, corner radii, shared styles. All UI references `DS.Colors`, `DS.CornerRadius`, etc. |
-| `ClickyAnalytics.swift` | ~121 | PostHog analytics integration for usage tracking. |
-| `WindowPositionManager.swift` | ~262 | Window placement logic, Screen Recording permission flow, and accessibility permission helpers. |
-| `AppBundleConfiguration.swift` | ~28 | Runtime configuration reader for keys stored in the app bundle Info.plist. |
-| `worker/src/index.ts` | ~142 | Cloudflare Worker proxy. Three routes: `/chat` (Claude), `/tts` (ElevenLabs), `/transcribe-token` (AssemblyAI temp token). |
+| `src/Clicky.App/AppBootstrapper.cs` | ~151 | App composition root. Wires tray shell, overlay, coordinator, microphone capture, transcription, and worker clients. |
+| `src/Clicky.App/Services/CompanionCoordinator.cs` | ~435 | Central state machine. Owns push-to-talk lifecycle, screenshot capture, Claude streaming, TTS playback, overlay state, and conversation history. |
+| `src/Clicky.App/Views/CompanionPanelWindow.xaml` | ~183 | Floating tray panel UI. Shows state, prompt box, model picker, worker summary, latest transcript, and latest response. |
+| `src/Clicky.App/Views/OverlayWindow.xaml` | ~60 | Transparent Clicky overlay bubble and live mic level bar. |
+| `src/Clicky.App/Services/Input/GlobalPushToTalkHook.cs` | ~117 | Global `Ctrl + Alt` low-level keyboard hook. Publishes press and release transitions. |
+| `src/Clicky.App/Services/Audio/WindowsMicrophoneCaptureService.cs` | ~77 | `NAudio` microphone capture at AssemblyAI’s preferred PCM16 mono format. Emits audio chunks and normalized audio level. |
+| `src/Clicky.App/Services/Transcription/AssemblyAiStreamingTranscriptionClient.cs` | ~62 | Fetches worker-issued AssemblyAI websocket tokens and starts streaming sessions. |
+| `src/Clicky.App/Services/Transcription/AssemblyAiStreamingTranscriptionSession.cs` | ~397 | Websocket session implementation. Streams PCM audio, tracks live turns, finalizes transcripts, and handles fallback delivery. |
+| `src/Clicky.App/Services/ScreenCapture/WindowsScreenCaptureService.cs` | ~40 | Captures all attached displays as PNG bytes for Claude vision requests. |
+| `src/Clicky.App/Services/Chat/ClaudeWorkerChatClient.cs` | ~188 | Streams Claude SSE responses through the Worker and packages screenshot payloads. |
+| `src/Clicky.App/Services/Tts/ElevenLabsTtsClient.cs` | ~152 | Fetches ElevenLabs audio from the Worker and plays it with `MediaPlayer`. |
+| `src/Clicky.App/Services/Chat/PointerInstructionParser.cs` | ~35 | Parses Claude point tags and strips them from spoken/displayed copy. |
+| `worker/src/index.ts` | ~141 | Cloudflare Worker proxy for `/chat`, `/tts`, and `/transcribe-token`. |
 
 ## Build & Run
 
+Windows only:
+
 ```bash
-# Open in Xcode
-open leanring-buddy.xcodeproj
-
-# Select the leanring-buddy scheme, set signing team, Cmd+R to build and run
-
-# Known non-blocking warnings: Swift 6 concurrency warnings,
-# deprecated onChange warning in OverlayWindow.swift. Do NOT attempt to fix these.
+dotnet restore Clicky.sln
+dotnet run --project src/Clicky.App/Clicky.App.csproj
 ```
 
-**Do NOT run `xcodebuild` from the terminal** — it invalidates TCC (Transparency, Consent, and Control) permissions and the app will need to re-request screen recording, accessibility, etc.
+You can also open `Clicky.sln` in Visual Studio and run `Clicky.App`.
 
 ## Cloudflare Worker
 
 ```bash
 cd worker
 npm install
-
-# Add secrets
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put ASSEMBLYAI_API_KEY
 npx wrangler secret put ELEVENLABS_API_KEY
-
-# Deploy
 npx wrangler deploy
+```
 
-# Local dev (create worker/.dev.vars with your keys)
+For local worker dev:
+
+```bash
+cd worker
 npx wrangler dev
 ```
+
+Set the desktop app Worker URL in `src/Clicky.App/appsettings.json` or `CLICKY_WORKER_BASE_URL`.
 
 ## Code Style & Conventions
 
 ### Variable and Method Naming
 
-IMPORTANT: Follow these naming rules strictly. Clarity is the top priority.
-
-- Be as clear and specific with variable and method names as possible
-- **Optimize for clarity over concision.** A developer with zero context on the codebase should immediately understand what a variable or method does just from reading its name
-- Use longer names when it improves clarity. Do NOT use single-character variable names
-- Example: use `originalQuestionLastAnsweredDate` instead of `originalAnswered`
-- When passing props or arguments to functions, keep the same names as the original variable. Do not shorten or abbreviate parameter names. If you have `currentCardData`, pass it as `currentCardData`, not `card` or `cardData`
+- Be extremely clear and specific
+- Optimize for clarity over concision
+- Use longer names when they remove ambiguity
+- Keep argument names aligned with the original variable names
 
 ### Code Clarity
 
-- **Clear is better than clever.** Do not write functionality in fewer lines if it makes the code harder to understand
-- Write more lines of code if additional lines improve readability and comprehension
-- Make things so clear that someone with zero context would completely understand the variable names, method names, what things do, and why they exist
-- When a variable or method name alone cannot fully explain something, add a comment explaining what is happening and why
+- Clear beats clever
+- Prefer more lines if they make the behavior easier to read
+- Add comments only when the why is not obvious from the code
 
-### Swift/SwiftUI Conventions
+### C# / WPF Conventions
 
-- Use SwiftUI for all UI unless a feature is only supported in AppKit (e.g., `NSPanel` for floating windows)
-- All UI state updates must be on `@MainActor`
-- Use async/await for all asynchronous operations
-- Comments should explain "why" not just "what", especially for non-obvious AppKit bridging
-- AppKit `NSPanel`/`NSWindow` bridged into SwiftUI via `NSHostingView`
-- All buttons must show a pointer cursor on hover
-- For any interactive element, explicitly think through its hover behavior (cursor, visual feedback, and whether hover should communicate clickability)
+- Use WPF for app UI
+- Use Win32 or WinForms interop only when Windows shell behavior requires it
+- Keep UI state mutations on the WPF Dispatcher
+- Use async/await for streaming, network, and long-running operations
+- Any interactive control should explicitly communicate clickability
+- Buttons should use a hand cursor on hover
 
 ### Do NOT
 
-- Do not add features, refactor code, or make "improvements" beyond what was asked
-- Do not add docstrings, comments, or type annotations to code you did not change
-- Do not try to fix the known non-blocking warnings (Swift 6 concurrency, deprecated onChange)
-- Do not rename the project directory or scheme (the "leanring" typo is intentional/legacy)
-- Do not run `xcodebuild` from the terminal — it invalidates TCC permissions
+- Do not reintroduce the old macOS project on `main`
+- Do not add direct API calls that bypass the Worker
+- Do not ship secrets in the desktop app
+- Do not replace the global low-level hook with `RegisterHotKey` for push-to-talk
+- Do not add unrelated platforms or compatibility branches inside this branch
 
 ## Git Workflow
 
 - Branch naming: `feature/description` or `fix/description`
-- Commit messages: imperative mood, concise, explain the "why" not the "what"
-- Do not force-push to main
+- Commit messages: imperative mood, concise, explain the why
+- Do not force-push to `main`
 
 ## Self-Update Instructions
 
-<!-- AI agents: follow these instructions to keep this file accurate. -->
+When you make architecture changes on this branch, update this file.
 
-When you make changes to this project that affect the information in this file, update this file to reflect those changes. Specifically:
-
-1. **New files**: Add new source files to the "Key Files" table with their purpose and approximate line count
-2. **Deleted files**: Remove entries for files that no longer exist
-3. **Architecture changes**: Update the architecture section if you introduce new patterns, frameworks, or significant structural changes
-4. **Build changes**: Update build commands if the build process changes
-5. **New conventions**: If the user establishes a new coding convention during a session, add it to the appropriate conventions section
-6. **Line count drift**: If a file's line count changes significantly (>50 lines), update the approximate count in the Key Files table
-
-Do NOT update this file for minor edits, bug fixes, or changes that don't affect the documented architecture or conventions.
+1. Add new source files to the key files table when they matter architecturally.
+2. Remove files that no longer exist.
+3. Update architecture notes when platform decisions or core flows change.
+4. Update build commands when the Windows build flow changes.
+5. Update conventions if the user sets new coding rules.
